@@ -34,7 +34,7 @@ export function Studio(): JSX.Element {
   const headers = useRef<HTMLDivElement>(null);
   const fileIn = useRef<HTMLInputElement>(null);
   const [drop, setDrop] = useState(false);
-  const drag = useRef<{ mode: 'move' | 'trimL' | 'trimR' | 'seek' | 'loop' | 'scrub'; clip?: Clip; x0: number; y0: number; t0: number; pos0?: number; ph0?: number; moved?: boolean; wasPlaying?: boolean; row?: number } | null>(null);
+  const drag = useRef<{ mode: 'move' | 'trimL' | 'trimR' | 'seek' | 'loop' | 'scrub'; clip?: Clip; x0: number; y0: number; t0: number; pos0?: number; ph0?: number; moved?: boolean; wasPlaying?: boolean; row?: number; top0?: number; cy0?: number; cx0?: number; axis?: 'x' | 'y' } | null>(null);
   const preview = useRef<Clip | null>(null);
 
   const zoom = ui.zoom;
@@ -137,7 +137,7 @@ export function Studio(): JSX.Element {
       const pos0 = engine.getPosition();
       const wasPlaying = engine.playing;
       if (wasPlaying) engine.stop();
-      drag.current = { mode: 'scrub', clip: hit, x0: a.x, y0: a.y, t0: a.t, pos0, ph0: pos0 * zoom - scroller.current!.scrollLeft, wasPlaying, row: a.row };
+      drag.current = { mode: 'scrub', clip: hit, x0: a.x, y0: a.y, t0: a.t, pos0, ph0: pos0 * zoom - scroller.current!.scrollLeft, wasPlaying, row: a.row, top0: scroller.current!.scrollTop, cy0: e.clientY, cx0: e.clientX, axis: undefined };
       return;
     }
     if (hit) {
@@ -156,9 +156,14 @@ export function Studio(): JSX.Element {
     const a = at(e); const dt = a.t - d.t0;
     if (d.mode === 'seek') { engine.seek(Math.max(0, a.t)); return; }
     if (d.mode === 'scrub') {
-      const dx = a.x - d.x0;
-      if (!d.moved && Math.abs(dx) < 8) return;
+      // screen coordinates (the canvas is sticky, so they are stable while we scroll)
+      const dx = e.clientX - d.cx0!, dy = e.clientY - d.cy0!;
+      if (!d.axis) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        d.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      }
       d.moved = true;
+      if (d.axis === 'y') { scroller.current!.scrollTop = Math.max(0, d.top0! - dy); return; }
       const pos = Math.max(0, d.pos0! - dx / zoom);
       engine.seek(pos);
       const sc = scroller.current!;
@@ -237,7 +242,7 @@ export function Studio(): JSX.Element {
           onDragOver={(e) => { e.preventDefault(); setDrop(true); }} onDragLeave={() => setDrop(false)}
           onDrop={(e) => { e.preventDefault(); setDrop(false); const a = at(e); void importFiles([...e.dataTransfer.files], p.tracks[a.row]?.id, Math.max(0, snap(a.t))); }}>
           <div style={{ width, height, position: 'relative' }}>
-            <canvas ref={cv} style={{ position: 'sticky', left: 0, top: 0, touchAction: 'pan-y' }}
+            <canvas ref={cv} style={{ position: 'sticky', left: 0, top: 0, touchAction: 'none' }}
               onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
           </div>
           {drop && <div className="dropzone">Dépose tes fichiers audio ici</div>}

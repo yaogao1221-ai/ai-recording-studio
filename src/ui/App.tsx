@@ -12,6 +12,8 @@ import { Projects, openProject } from './views/Projects';
 import { Record } from './views/Record';
 import { Studio, deleteSelected, splitSelected } from './views/Studio';
 
+declare const __BUILD__: string;
+
 const NAV: { v: View; ico: string; l: string }[] = [
   { v: 'studio', ico: '▤', l: 'Studio' }, { v: 'record', ico: '🎙', l: 'Cabine' }, { v: 'mixer', ico: '☷', l: 'Console' },
   { v: 'master', ico: '◎', l: 'Master' }, { v: 'analyzer', ico: '∿', l: 'Analyse' }, { v: 'export', ico: '⇩', l: 'Export' }, { v: 'projects', ico: '▣', l: 'Projets' },
@@ -111,6 +113,7 @@ export function App(): JSX.Element {
         <button className="ghost" onClick={undo} disabled={!canUndo} title="Annuler (Ctrl+Z)">↶</button>
         <button className="ghost" onClick={redo} disabled={!canRedo} title="Rétablir (Ctrl+Maj+Z)">↷</button>
         <span className="dim hide-m" style={{ fontSize: 11 }}>{saving ? 'Sauvegarde…' : savedAt ? 'Sauvegardé' : ''}</span>
+        <span className="dim mono" style={{ fontSize: 10 }} title="Version">v{__BUILD__}</span>
         <button onClick={() => setUi({ mode: ui.mode === 'beginner' ? 'advanced' : 'beginner' })} title="Mode Débutant / Avancé">{ui.mode === 'beginner' ? 'Débutant' : 'Avancé'}</button>
       </header>
       <nav className="nav">
