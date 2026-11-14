@@ -253,6 +253,27 @@ export class AudioEngine {
     this.emit();
     return r;
   }
+  /** Record `sec` seconds from the open mic without the transport (mic test), then return the buffer. */
+  async testRecord(sec: number): Promise<AudioBuffer | null> {
+    if (!this.recNode || this.recording) return null;
+    this.recChunks = [];
+    const done = new Promise<{ firstFrame: number; channels: number }>((r) => { this.recResolve = r; });
+    this.recNode.port.postMessage({ cmd: 'start', startFrame: 0 });
+    await new Promise((r) => setTimeout(r, sec * 1000));
+    this.recNode.port.postMessage({ cmd: 'stop' });
+    await done;
+    const total = this.recChunks.reduce((n, c) => n + c[0].length, 0);
+    if (!total) return null;
+    const buf = this.ctx.createBuffer(1, total, this.ctx.sampleRate);
+    let o = 0; for (const c of this.recChunks) { buf.getChannelData(0).set(c[0], o); o += c[0].length; }
+    this.recChunks = [];
+    return buf;
+  }
+  /** Play a buffer directly to the output (previews). */
+  preview(buf: AudioBuffer): AudioBufferSourceNode {
+    const s = this.ctx.createBufferSource(); s.buffer = buf; s.connect(this.ctx.destination); s.start(); return s;
+  }
+
   /** first captured frame corresponds to recStartPos at startFrame; difference is sub-block alignment */
   private startCtxAtRec(firstFrame: number): number {
     const expected = this.startCtx + (this.recStartPos - this.startPos);
