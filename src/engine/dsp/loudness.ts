@@ -32,7 +32,7 @@ export class LoudnessMeter {
   private subs: number[] = []; // mean-square per 100ms sub-block (sum of channels)
   private blocks: number[] = []; // 400ms block mean-squares (for integrated)
   private stBlocks: number[] = []; // 3s short-term loudness every 100ms (for LRA)
-  constructor(private sr: number) {
+  constructor(sr: number) {
     const [a, b] = kWeightingCoefs(sr); this.f1.set(a); this.f2.set(b);
     this.sub = Math.round(sr / 10);
   }
