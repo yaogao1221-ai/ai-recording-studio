@@ -16,11 +16,14 @@ export class Strip {
   private fader: GainNode; private panner: StereoPannerNode | null; private muteGain: GainNode;
   readonly meter: AudioWorkletNode;
   readonly analyser: AnalyserNode | null = null;
+  readonly analyserL: AnalyserNode | null = null;
+  readonly analyserR: AnalyserNode | null = null;
   inserts: InsertNode[] = [];
   private insertKey = '';
   meterValue: MeterReading = { peakL: 0, peakR: 0, rmsL: 0, rmsR: 0 };
   gr: Record<string, number> = {};
   dest: string | null = null;
+  private split: ChannelSplitterNode | null = null;
 
   constructor(private ctx: BaseAudioContext, readonly id: string, full: boolean, withAnalyser = false) {
     this.input = ctx.createGain();
@@ -37,6 +40,11 @@ export class Strip {
     if (withAnalyser) {
       this.analyser = ctx.createAnalyser(); this.analyser.fftSize = 8192; this.analyser.smoothingTimeConstant = 0.75;
       this.meter.connect(this.analyser);
+      const sp = ctx.createChannelSplitter(2);
+      this.analyserL = ctx.createAnalyser(); this.analyserR = ctx.createAnalyser();
+      this.analyserL.fftSize = 2048; this.analyserR.fftSize = 2048;
+      this.meter.connect(sp); sp.connect(this.analyserL, 0); sp.connect(this.analyserR, 1);
+      this.split = sp;
     }
     this.input.connect(this.fader);
   }
@@ -79,6 +87,7 @@ export class Strip {
     if (this.dest === dest) return;
     this.meter.disconnect();
     if (this.analyser) this.meter.connect(this.analyser);
+    if (this.split) this.meter.connect(this.split);
     this.meter.connect(node);
     this.dest = dest;
   }
@@ -137,7 +146,9 @@ export class MixGraph {
       this.trackInputs.get(t.id)!.gain.setTargetAtTime(dbToGain((t as Track).inputGain), this.ctx.currentTime, 0.01);
     }
     this.master.syncInserts(this.opts.bypassMaster ? [] : p.master.inserts, p.bpm);
-    this.master.setLevels(this.opts.bypassMaster ? 0 : p.master.volume, 0, true);
+    if (this.masterBypass) this.master.inserts.forEach((n) => n.setEnabled(false));
+    this.master.setLevels((this.opts.bypassMaster ? 0 : p.master.volume) + this.masterTrim, 0, true);
+    this.last = p;
   }
 
   private applyChannel(c: Track | Bus, p: Project, audible: boolean): void {
@@ -148,6 +159,14 @@ export class MixGraph {
     if (this.opts.directToMaster && c.kind === 'track') dest = 'master';
     const target = dest !== 'master' && this.strips.has(dest) && dest !== c.id ? this.strips.get(dest)!.input : this.master.input;
     s.connectTo(target === this.master.input ? 'master' : dest, target);
+  }
+
+  /** A/B comparison of the master chain (does not modify the project). */
+  masterBypass = false; masterTrim = 0;
+  private last: Project | null = null;
+  setMasterAB(bypass: boolean, trimDb: number): void {
+    this.masterBypass = bypass; this.masterTrim = trimDb;
+    if (this.last) this.sync(this.last);
   }
 
   dispose(): void { this.strips.forEach((s) => s.dispose()); this.master.dispose(); }
