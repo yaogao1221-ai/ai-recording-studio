@@ -3,6 +3,7 @@ import { engine } from '../engine/engine';
 import { loadProject, requestPersistence, saveProject } from '../engine/storage';
 import { getState, redo, saveNow, setUi, toast, undo, update, useStore, type View } from '../state/store';
 import { fmtTime, useTicker } from './components/common';
+import { quickRecord } from './quickRecord';
 import { Analyzer } from './views/Analyzer';
 import { Export } from './views/Export';
 import { Master } from './views/Master';
@@ -25,7 +26,7 @@ function Transport(): JSX.Element {
     <div className="transport">
       <button onClick={() => engine.seek(0)} title="Début (Origine)">⏮</button>
       <button className={engine.playing ? 'on' : ''} onClick={() => (engine.playing ? engine.stop() : void engine.play())} title="Lecture / Stop (Espace)">{engine.playing ? '❚❚' : '▶'}</button>
-      <button className={'rec ' + (rec ? 'on' : '')} onClick={() => setUi({ view: 'record' })} title="Enregistrement (Cabine)">●</button>
+      <button className={'rec ' + (rec ? 'on' : '')} onClick={() => void quickRecord()} title="Enregistrer sur la piste choisie (R)">●</button>
       <span className="clock">{fmtTime(engine.getAudiblePosition())}</span>
       <button className={loop.on ? 'on' : ''} onClick={() => update((p) => { p.loop.on = !p.loop.on; })} title="Boucle (L)">⟲</button>
       <label className="row hide-m mono" title="Tempo">
@@ -87,6 +88,7 @@ export function App(): JSX.Element {
       else if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
       else if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); void saveNow().then(() => toast('Projet sauvegardé')); }
+      else if (e.key === 'r' || e.key === 'R') void quickRecord();
       else if (e.key === 'l' || e.key === 'L') update((q) => { q.loop.on = !q.loop.on; });
       else if (e.key === 's' || e.key === 'S') splitSelected();
       else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected();

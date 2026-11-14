@@ -4,7 +4,8 @@ import { ROLE_LABEL, TRACK_COLORS, newTrack, projectDuration, type Clip, type Tr
 import { uid } from '../../engine/plugins/registry';
 import { getPeaks, importFiles } from '../../state/assets';
 import { getState, setUi, toast, update, useStore } from '../../state/store';
-import { useFrame } from '../components/common';
+import { fmtTime, useFrame, useTicker } from '../components/common';
+import { quickRecord, recordTarget } from '../quickRecord';
 
 const RULER = 28, ROW = 72;
 
@@ -25,6 +26,7 @@ export function deleteSelected(): void {
 }
 
 export function Studio(): JSX.Element {
+  useTicker(true);
   const p = useStore((s) => s.project);
   const ui = useStore((s) => s.ui);
   const cv = useRef<HTMLCanvasElement>(null);
@@ -32,7 +34,7 @@ export function Studio(): JSX.Element {
   const headers = useRef<HTMLDivElement>(null);
   const fileIn = useRef<HTMLInputElement>(null);
   const [drop, setDrop] = useState(false);
-  const drag = useRef<{ mode: 'move' | 'trimL' | 'trimR' | 'seek' | 'loop'; clip?: Clip; x0: number; y0: number; t0: number } | null>(null);
+  const drag = useRef<{ mode: 'move' | 'trimL' | 'trimR' | 'seek' | 'loop' | 'scrub'; clip?: Clip; x0: number; y0: number; t0: number; pos0?: number; ph0?: number; moved?: boolean; wasPlaying?: boolean; row?: number } | null>(null);
   const preview = useRef<Clip | null>(null);
 
   const zoom = ui.zoom;
@@ -122,13 +124,22 @@ export function Studio(): JSX.Element {
 
   function onDown(e: React.PointerEvent): void {
     const a = at(e);
-    (e.target as Element).setPointerCapture(e.pointerId);
+    try { (e.target as Element).setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
     if (a.y < RULER) {
       if (e.shiftKey) { drag.current = { mode: 'loop', x0: a.x, y0: a.y, t0: snap(a.t) }; return; }
       engine.seek(Math.max(0, a.t)); drag.current = { mode: 'seek', x0: a.x, y0: a.y, t0: a.t }; return;
     }
     const tr = p.tracks[a.row];
     const hit = [...p.clips].reverse().find((c) => c.trackId === tr?.id && a.t >= c.start && a.t <= c.start + c.duration);
+    // Touch: swipe = move through the song (the timeline slides under a fixed playhead), tap = select the track.
+    // A clip is only moved/trimmed by touch once it is already selected.
+    if (e.pointerType === 'touch' && !(hit && hit.id === ui.selectedClip)) {
+      const pos0 = engine.getPosition();
+      const wasPlaying = engine.playing;
+      if (wasPlaying) engine.stop();
+      drag.current = { mode: 'scrub', clip: hit, x0: a.x, y0: a.y, t0: a.t, pos0, ph0: pos0 * zoom - scroller.current!.scrollLeft, wasPlaying, row: a.row };
+      return;
+    }
     if (hit) {
       const ex = (hit.start + hit.duration) * zoom - scroller.current!.scrollLeft;
       const sx = hit.start * zoom - scroller.current!.scrollLeft;
@@ -144,6 +155,16 @@ export function Studio(): JSX.Element {
     const d = drag.current; if (!d) return;
     const a = at(e); const dt = a.t - d.t0;
     if (d.mode === 'seek') { engine.seek(Math.max(0, a.t)); return; }
+    if (d.mode === 'scrub') {
+      const dx = a.x - d.x0;
+      if (!d.moved && Math.abs(dx) < 8) return;
+      d.moved = true;
+      const pos = Math.max(0, d.pos0! - dx / zoom);
+      engine.seek(pos);
+      const sc = scroller.current!;
+      sc.scrollLeft = Math.max(0, pos * zoom - Math.max(40, Math.min(sc.clientWidth - 40, d.ph0!)));
+      return;
+    }
     if (d.mode === 'loop') { const t = snap(a.t); update((q) => { q.loop = { on: true, start: Math.min(d.t0, t), end: Math.max(d.t0, t) }; }, 'loopdrag'); return; }
     const c = d.clip!; const buf = engine.buffers.get(c.assetId);
     if (d.mode === 'move') {
@@ -158,6 +179,20 @@ export function Studio(): JSX.Element {
     }
   }
   function onUp(): void {
+    const d = drag.current;
+    if (d?.mode === 'scrub') {
+      drag.current = null;
+      if (!d.moved) {
+        // tap: select (and arm) the track under the finger
+        const tr = p.tracks[d.row ?? -1];
+        if (tr) {
+          setUi({ selectedTrack: tr.id, selectedClip: d.clip?.id ?? null });
+          if (tr.role !== 'beat') update((q) => { q.tracks.forEach((x) => { x.armed = x.id === tr.id; }); });
+        }
+      }
+      if (d.wasPlaying) void engine.play();
+      return;
+    }
     const pr = preview.current; drag.current = null; preview.current = null;
     if (pr) update((q) => { const i = q.clips.findIndex((x) => x.id === pr.id); if (i >= 0) q.clips[i] = pr; });
   }
@@ -166,9 +201,9 @@ export function Studio(): JSX.Element {
   const adv = ui.mode === 'advanced';
 
   return (
-    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', height: '100%' }}>
+    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto auto', height: '100%' }}>
       <div className="toolbar">
-        <button onClick={() => fileIn.current?.click()} title="Importer des fichiers audio (ou glisser-déposer)">＋ Importer audio</button>
+        <button onClick={() => fileIn.current?.click()} title="Importer des fichiers audio (ou glisser-déposer)">＋ Importer audio<span className="show-m"> (Fichiers)</span></button>
         <input ref={fileIn} type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.aif,.aiff" multiple hidden onChange={(e) => { void importFiles([...(e.target.files ?? [])], ui.selectedTrack ?? undefined, engine.getPosition()); e.target.value = ''; }} />
         <button onClick={() => update((q) => { const t = newTrack(`Piste ${q.tracks.length + 1}`, 'other', TRACK_COLORS[q.tracks.length % TRACK_COLORS.length]); q.tracks.push(t); })}>＋ Piste</button>
         <span className="sp" />
@@ -178,6 +213,7 @@ export function Studio(): JSX.Element {
         <button onClick={() => setUi({ zoom: Math.max(5, zoom / 1.5) })} title="Zoom arrière (-)">−</button>
         <button onClick={() => setUi({ zoom: Math.min(800, zoom * 1.5) })} title="Zoom avant (+)">＋</button>
         {adv && <span className="dim hide-m">Maj + glisser dans la règle = boucle</span>}
+        <span className="dim show-m">Glisse pour avancer / reculer · touche une piste pour la choisir</span>
       </div>
       <div className="arrange" style={{ minHeight: 0 }}>
         <div className="headers" ref={headers}>
@@ -190,7 +226,7 @@ export function Studio(): JSX.Element {
                 <button className={t.mute ? 'on' : ''} onClick={(e) => { e.stopPropagation(); update((q) => { const k = q.tracks.find((x) => x.id === t.id)!; k.mute = !k.mute; }); }} title="Mute">M</button>
                 <button className={t.solo ? 'on' : ''} onClick={(e) => { e.stopPropagation(); update((q) => { const k = q.tracks.find((x) => x.id === t.id)!; k.solo = !k.solo; }); }} title="Solo">S</button>
                 {t.role !== 'beat' && <button className={'rec ' + (t.armed ? 'on' : '')} style={{ animation: 'none' }} onClick={(e) => { e.stopPropagation(); update((q) => { q.tracks.forEach((x) => { x.armed = x.id === t.id ? !x.armed : false; }); }); setUi({ selectedTrack: t.id }); }} title="Armer pour l’enregistrement">●</button>}
-                {adv && <select value={t.role} onClick={(e) => e.stopPropagation()} onChange={(e) => update((q) => { q.tracks.find((x) => x.id === t.id)!.role = e.target.value as TrackRole; })} style={{ fontSize: 10, padding: '1px 2px', width: 70 }}>
+                {adv && <select className="hide-m" value={t.role} onClick={(e) => e.stopPropagation()} onChange={(e) => update((q) => { q.tracks.find((x) => x.id === t.id)!.role = e.target.value as TrackRole; })} style={{ fontSize: 10, padding: '1px 2px', width: 70 }}>
                   {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>}
               </div>
@@ -201,11 +237,11 @@ export function Studio(): JSX.Element {
           onDragOver={(e) => { e.preventDefault(); setDrop(true); }} onDragLeave={() => setDrop(false)}
           onDrop={(e) => { e.preventDefault(); setDrop(false); const a = at(e); void importFiles([...e.dataTransfer.files], p.tracks[a.row]?.id, Math.max(0, snap(a.t))); }}>
           <div style={{ width, height, position: 'relative' }}>
-            <canvas ref={cv} style={{ position: 'sticky', left: 0, top: 0, touchAction: 'none' }}
+            <canvas ref={cv} style={{ position: 'sticky', left: 0, top: 0, touchAction: 'pan-y' }}
               onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
           </div>
           {drop && <div className="dropzone">Dépose tes fichiers audio ici</div>}
-          {p.clips.length === 0 && !drop && <div style={{ position: 'absolute', top: RULER + 16, left: 16, right: 16, pointerEvents: 'none' }} className="note">Glisse ton instrumental ici (WAV, MP3, M4A…) ou utilise « Importer audio », puis va dans <b>Cabine</b> pour enregistrer ta voix.</div>}
+          {p.clips.length === 0 && !drop && <div style={{ position: 'absolute', top: RULER + 16, left: 16, right: 16, pointerEvents: 'none' }} className="note">Glisse ton instrumental ici (WAV, MP3, M4A…) ou utilise « Importer audio ». Sur iPhone, l’instru doit être dans l’app Fichiers (iCloud Drive, Téléchargements…). Ensuite touche une piste voix et appuie sur ● REC.</div>}
         </div>
       </div>
       {sel && (
@@ -218,6 +254,14 @@ export function Studio(): JSX.Element {
           <span className="mono dim">début {sel.start.toFixed(3)} s · durée {sel.duration.toFixed(3)} s</span>
         </div>
       )}
+      <div className="quickrec">
+        <button className={'bigrec rec ' + (engine.recording ? 'on' : '')} onClick={() => void quickRecord()} aria-label="Enregistrer">{engine.recording ? '■ STOP' : '● REC'}</button>
+        <div className="col grow" style={{ gap: 2 }}>
+          <b>{engine.recording ? 'Enregistrement…' : 'Prêt'} sur « {recordTarget()?.name ?? '—'} »</b>
+          <span className="dim" style={{ fontSize: 11 }}>{engine.input ? `Micro : ${engine.input.device.label || 'par défaut'}` : 'Le micro s’ouvre au premier enregistrement'} · départ {fmtTime(engine.getPosition())}, pré-roll {p.preroll} s</span>
+        </div>
+        <button onClick={() => (engine.playing ? engine.stop() : void engine.play())} disabled={engine.recording}>{engine.playing ? '❚❚' : '▶'}</button>
+      </div>
     </div>
   );
 }

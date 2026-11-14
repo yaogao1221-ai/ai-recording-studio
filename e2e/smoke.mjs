@@ -108,6 +108,24 @@ const ip = await browser.newContext({ ...devices['iPhone 13'], permissions: ['mi
 const mp = await ip.newPage();
 await mp.goto(base);
 await mp.getByRole('button', { name: 'Commencer' }).click();
+// touch: swipe moves the playhead, tap selects a track
+await mp.locator('input[type=file]').first().setInputFiles(beatPath);
+await mp.waitForFunction(() => window.__ars.store.getState().project.clips.length >= 1, null, { timeout: 15000 });
+const touch = await mp.evaluate(async () => {
+  const cv = document.querySelector('.timeline canvas'); const r = cv.getBoundingClientRect();
+  const fire = (type, x, y) => cv.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: 7, clientX: r.left + x, clientY: r.top + y, bubbles: true, isPrimary: true }));
+  const { engine, store } = window.__ars;
+  engine.seek(2);
+  fire('pointerdown', 200, 60); for (let i = 1; i <= 10; i++) fire('pointermove', 200 - i * 12, 60); fire('pointerup', 80, 60);
+  const afterSwipe = engine.getPosition();
+  const row = 1; fire('pointerdown', 150, 28 + row * 72 + 30); fire('pointerup', 150, 28 + row * 72 + 30);
+  await new Promise((r) => setTimeout(r, 50));
+  const s = store.getState(); const t = s.project.tracks[row];
+  return { afterSwipe, selected: s.ui.selectedTrack === t.id, armed: t.armed };
+});
+ok('touch swipe moves the playhead forward', touch.afterSwipe > 2.5, `pos=${touch.afterSwipe.toFixed(2)}`);
+ok('touch tap selects and arms the track', touch.selected && touch.armed);
+await mp.screenshot({ path: path.join(out, 'studio-iphone.png') });
 await mp.getByRole('button', { name: /Cabine/ }).click();
 await mp.waitForTimeout(500);
 await mp.screenshot({ path: path.join(out, 'cabine-iphone.png'), fullPage: true });
